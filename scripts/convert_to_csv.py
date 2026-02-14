@@ -14,7 +14,7 @@ from pathlib import Path
 # Ports that strongly indicate a server role
 SERVER_PORTS = {
     22, 25, 53, 80, 88, 135, 139, 389, 443, 445, 636, 993, 995,
-    1433, 1521, 3306, 3389, 5432, 5900, 5985, 5986, 6443,
+    1433, 1521, 3268, 3269, 3306, 3389, 5432, 5900, 5985, 5986, 6443,
     8080, 8443, 8728, 8729, 9090, 9200,
 }
 
@@ -28,9 +28,12 @@ SERVER_OS_KEYWORDS = [
 
 # Ports with strong server signal (weighted higher)
 STRONG_SERVER_PORTS = {
-    25, 53, 88, 135, 389, 445, 636, 1433, 1521, 3306, 5432,
+    25, 53, 88, 135, 389, 445, 636, 1433, 1521, 3268, 3269, 3306, 5432,
     5985, 5986, 6443, 8728, 8729, 9200,
 }
+
+# Ports associated with Domain Controller roles
+DC_PORTS = {88, 389, 636, 3268, 53, 445}
 
 CSV_HEADERS = [
     "IP Address",
@@ -44,6 +47,8 @@ CSV_HEADERS = [
     "Site",
     "Likely Server",
     "Server Indicators",
+    "Likely DC",
+    "Domain",
 ]
 
 
@@ -61,6 +66,8 @@ def parse_host(host_elem, site_name):
         "Site": site_name,
         "Likely Server": "No",
         "Server Indicators": "",
+        "Likely DC": "No",
+        "Domain": "",
     }
 
     # Skip hosts that are down
@@ -127,27 +134,63 @@ def parse_host(host_elem, site_name):
     record["Open Ports"] = ", ".join(open_ports)
     record["Services"] = "; ".join(services)
 
-    # SMB/NetBIOS script results
+    # SMB/NetBIOS/LDAP script results
+    has_netbios_1c = False
     host_script = host_elem.find("hostscript")
     if host_script is not None:
         for script in host_script.findall("script"):
             script_id = script.get("id", "")
-            if script_id in ("smb-os-discovery", "nbstat"):
-                output = script.get("output", "")
+            output = script.get("output", "")
+
+            if script_id == "nbstat":
                 # If we don't have a hostname yet, try to extract from NetBIOS
-                if not record["Hostname"] and script_id == "nbstat":
+                if not record["Hostname"]:
                     for line in output.splitlines():
                         if "<unique>" in line.lower() and "<active>" in line.lower():
                             parts = line.strip().split()
                             if parts:
                                 record["Hostname"] = parts[0]
                                 break
+                # Check for <1C> group type — definitive DC identifier
+                for line in output.splitlines():
+                    if "<1c>" in line.lower() and "<group>" in line.lower():
+                        has_netbios_1c = True
+                        break
+
+            elif script_id == "smb-os-discovery":
                 # If we don't have OS yet, try SMB discovery
-                if not record["OS"] and script_id == "smb-os-discovery":
+                if not record["OS"]:
                     for line in output.splitlines():
                         if "OS:" in line:
                             record["OS"] = line.split("OS:", 1)[1].strip()
                             break
+                # Extract domain name from SMB discovery (fallback)
+                if not record["Domain"]:
+                    for line in output.splitlines():
+                        line_stripped = line.strip()
+                        if line_stripped.startswith("Domain name:"):
+                            domain = line_stripped.split(":", 1)[1].strip()
+                            if domain:
+                                record["Domain"] = domain
+                                break
+
+            elif script_id == "ldap-rootdse":
+                # Extract defaultNamingContext → domain name
+                for line in output.splitlines():
+                    if "defaultNamingContext" in line:
+                        # Format: defaultNamingContext: DC=corp,DC=example,DC=com
+                        parts = line.split(":", 1)
+                        if len(parts) == 2:
+                            dn = parts[1].strip()
+                            # Convert DC=corp,DC=example,DC=com → corp.example.com
+                            dc_parts = []
+                            for component in dn.split(","):
+                                component = component.strip()
+                                if component.upper().startswith("DC="):
+                                    dc_parts.append(component[3:])
+                            if dc_parts:
+                                record["Domain"] = ".".join(dc_parts)
+                        break
 
     # Server classification
     indicators = []
@@ -184,9 +227,27 @@ def parse_host(host_elem, site_name):
         and (len(strong_matches) >= 1 or len(server_port_matches) >= 3 or any("OS:" in i for i in indicators))
     )
 
+    # LDAPS indicator
+    if 636 in open_port_numbers:
+        indicators.append("LDAPS(636)")
+
     if is_server:
         record["Likely Server"] = "Yes"
         record["Server Indicators"] = "; ".join(indicators)
+
+    # Domain Controller classification
+    dc_port_matches = open_port_numbers & DC_PORTS
+    has_kerberos_or_gc = bool(open_port_numbers & {88, 3268})
+    is_dc = (
+        (len(dc_port_matches) >= 3 and has_kerberos_or_gc)
+        or has_netbios_1c
+    )
+    if is_dc:
+        record["Likely DC"] = "Yes"
+        # DCs are always servers
+        if record["Likely Server"] != "Yes":
+            record["Likely Server"] = "Yes"
+            record["Server Indicators"] = "; ".join(indicators) if indicators else "DC ports"
 
     return record
 
@@ -307,6 +368,7 @@ def main():
     deduped.sort(key=lambda r: tuple(int(o) for o in r["IP Address"].split(".") if o.isdigit()))
 
     servers = [r for r in deduped if r["Likely Server"] == "Yes"]
+    dcs = [r for r in deduped if r["Likely DC"] == "Yes"]
 
     # Write CSVs
     os.makedirs(output_dir, exist_ok=True)
@@ -322,10 +384,11 @@ def main():
 
     # Summary
     print(f"\n=== Summary ===")
-    print(f"Total hosts:    {len(deduped)}")
-    print(f"Likely servers: {len(servers)}")
+    print(f"Total hosts:      {len(deduped)}")
+    print(f"Likely servers:   {len(servers)}")
+    print(f"Likely DCs:       {len(dcs)}")
     if deduped:
-        print(f"Server ratio:   {len(servers)/len(deduped)*100:.1f}%")
+        print(f"Server ratio:     {len(servers)/len(deduped)*100:.1f}%")
 
 
 if __name__ == "__main__":

@@ -240,6 +240,10 @@ run_netbios_query() {
             else
                 echo "     NetBIOS response received (see log for details)"
             fi
+            # Check for <1C> group type — indicates a Domain Controller
+            if echo "$nbresult" | grep -qi '<1c>'; then
+                echo "     Domain Controller detected (NetBIOS <1C> group)"
+            fi
         else
             echo "     No NetBIOS response"
         fi

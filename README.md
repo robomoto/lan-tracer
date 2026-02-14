@@ -63,7 +63,9 @@ Runs targeted port scan with OS detection and service version identification. Re
 ./scripts/discover_servers.sh office -T3 -t 8
 ```
 
-Scans ~30 server-indicative ports: SSH(22), SMTP(25), DNS(53), HTTP(80/443), Kerberos(88), SMB(135/139/445), LDAP(389/636), MSSQL(1433), Oracle(1521), MySQL(3306), RDP(3389), PostgreSQL(5432), VNC(5900), WinRM(5985/5986), K8s API(6443), Web Admin(8080/8443), MikroTik(8728/8729), Prometheus/Cockpit(9090), Elasticsearch(9200).
+Scans ~30 server-indicative ports: SSH(22), SMTP(25), DNS(53), HTTP(80/443), Kerberos(88), SMB(135/139/445), LDAP(389/636), MSSQL(1433), Oracle(1521), Global Catalog(3268/3269), MySQL(3306), RDP(3389), PostgreSQL(5432), VNC(5900), WinRM(5985/5986), K8s API(6443), Web Admin(8080/8443), MikroTik(8728/8729), Prometheus/Cockpit(9090), Elasticsearch(9200).
+
+Also runs `ldap-rootdse` (anonymous LDAP query) to detect Active Directory domain information.
 
 ### Phase 3: CSV Export (`convert_to_csv.py`)
 
@@ -83,7 +85,7 @@ python3 scripts/convert_to_csv.py --servers-only
 python3 scripts/convert_to_csv.py --output-dir /tmp/export
 ```
 
-Output columns: IP Address, MAC Address, Vendor, Hostname, OS, OS Accuracy, Open Ports, Services, Site, Likely Server, Server Indicators.
+Output columns: IP Address, MAC Address, Vendor, Hostname, OS, OS Accuracy, Open Ports, Services, Site, Likely Server, Server Indicators, Likely DC, Domain.
 
 ### Host Investigation (`identify.sh`)
 
@@ -129,6 +131,15 @@ The CSV converter uses heuristics to flag likely servers:
 - **OS match**: Contains "Server", "Linux", "FreeBSD", "ESXi", "RouterOS", etc.
 - **Strong server ports**: Ports like LDAP(389), Kerberos(88), MSSQL(1433), SMB(445)
 - **Port count**: 3+ server-indicative ports open
+
+### Domain Controller Classification
+
+The CSV converter identifies likely Domain Controllers using:
+
+- **DC port heuristic**: 3+ DC-associated ports open (Kerberos/88, LDAP/389, LDAPS/636, Global Catalog/3268, DNS/53, SMB/445) **and** at least one of Kerberos(88) or Global Catalog(3268) is present
+- **NetBIOS `<1C>` group type**: A definitive DC identifier from nbstat output
+
+Domain name is extracted from `ldap-rootdse` output (`defaultNamingContext`), falling back to `smb-os-discovery` domain name.
 
 ## Multi-Site Workflow
 

@@ -6,7 +6,7 @@ PROJECT_DIR="$(dirname "$SCRIPT_DIR")"
 RESULTS_DIR="$PROJECT_DIR/results"
 
 # Server-indicative ports
-SERVER_PORTS="22,25,53,80,88,135,139,389,443,445,636,993,995,1433,1521,3306,3389,5432,5900,5985,5986,6443,8080,8443,8728,8729,9090,9200"
+SERVER_PORTS="22,25,53,80,88,135,139,389,443,445,636,993,995,1433,1521,3268,3269,3306,3389,5432,5900,5985,5986,6443,8080,8443,8728,8729,9090,9200"
 
 usage() {
     cat <<EOF
@@ -112,7 +112,7 @@ NMAP_CMD=(
     --osscan-guess                  # Aggressive OS guessing
     -sV                             # Service version detection
     -p "$SERVER_PORTS"              # Targeted server ports
-    --script=smb-os-discovery,nbstat  # Windows detail scripts
+    --script=smb-os-discovery,nbstat,ldap-rootdse  # Windows/DC detail scripts
     -T"$TIMING"                     # Timing template
     --min-hostgroup "$HOST_GROUP"   # Parallel host scanning
     --max-retries 2                 # Limit retries for speed
