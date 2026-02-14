@@ -10,17 +10,20 @@ usage() {
     cat <<EOF
 Usage: $(basename "$0") <site_name> [subnet | -f config_file]
 
-Quick network sweep using nmap ping scan (-sn).
-Finds all live hosts and saves results for deeper scanning.
+Quick network sweep using nmap ping scan (-sn), with optional arp-scan
+fallback to catch hosts that block ICMP.
 
 Examples:
   $(basename "$0") office 10.10.1.0/24
   $(basename "$0") office -f sites/office.conf
   $(basename "$0") office 10.10.1.0/24 10.10.2.0/24
+  $(basename "$0") office -f sites/office.conf --no-arp
 
 Options:
-  -f FILE   Read subnets from a site config file (one CIDR per line)
-  -h        Show this help
+  -f FILE    Read subnets from a site config file (one CIDR per line)
+  --no-arp   Skip arp-scan fallback (nmap only)
+  -i IFACE   Network interface for arp-scan (default: auto-detect)
+  -h         Show this help
 EOF
     exit 1
 }
@@ -32,8 +35,10 @@ fi
 SITE_NAME="$1"
 shift
 
-# Collect subnets
+# Collect subnets and options
 SUBNETS=()
+USE_ARP=true
+ARP_IFACE=""
 while [[ $# -gt 0 ]]; do
     case "$1" in
         -f)
@@ -53,6 +58,13 @@ while [[ $# -gt 0 ]]; do
                 [[ -z "$line" ]] && continue
                 SUBNETS+=("$line")
             done < "$CONFIG_FILE"
+            ;;
+        --no-arp)
+            USE_ARP=false
+            ;;
+        -i)
+            shift
+            ARP_IFACE="$1"
             ;;
         -h)
             usage
@@ -75,6 +87,26 @@ if ! command -v nmap &>/dev/null; then
     echo "  macOS:  brew install nmap"
     echo "  Linux:  sudo apt install nmap"
     exit 1
+fi
+
+# Check for arp-scan
+HAS_ARP=false
+if [[ "$USE_ARP" == true ]] && command -v arp-scan &>/dev/null; then
+    HAS_ARP=true
+elif [[ "$USE_ARP" == true ]]; then
+    echo "Note: arp-scan not found. Install for better discovery of ICMP-blocking hosts."
+    echo "  macOS:  brew install arp-scan"
+    echo "  Linux:  sudo apt install arp-scan"
+    echo ""
+fi
+
+# Auto-detect network interface for arp-scan
+if [[ "$HAS_ARP" == true && -z "$ARP_IFACE" ]]; then
+    if [[ "$(uname)" == "Darwin" ]]; then
+        ARP_IFACE=$(route -n get default 2>/dev/null | awk '/interface:/{print $2}' || echo "en0")
+    else
+        ARP_IFACE=$(ip route show default 2>/dev/null | awk '{print $5; exit}' || echo "eth0")
+    fi
 fi
 
 # Create output directory
@@ -115,7 +147,34 @@ for SUBNET in "${SUBNETS[@]}"; do
     echo ""
 done
 
-# Deduplicate
+# Phase 2: arp-scan fallback to find ICMP-blocking hosts
+if [[ "$HAS_ARP" == true ]]; then
+    echo "--- ARP scan fallback (finding ICMP-blocking hosts) ---"
+    echo "Interface: $ARP_IFACE"
+    echo ""
+
+    NMAP_COUNT=$(wc -l < "$ALL_LIVE_HOSTS" | xargs)
+    ARP_LOG="$SITE_DIR/arpscan_${TIMESTAMP}.txt"
+
+    for SUBNET in "${SUBNETS[@]}"; do
+        echo "  ARP scanning $SUBNET ..."
+        sudo arp-scan --interface="$ARP_IFACE" "$SUBNET" 2>/dev/null | \
+            tee -a "$ARP_LOG" | \
+            awk '/^[0-9]+\./{print $1}' >> "$ALL_LIVE_HOSTS"
+    done
+
+    # Deduplicate after adding arp-scan results
+    sort -u -o "$ALL_LIVE_HOSTS" "$ALL_LIVE_HOSTS"
+    ARP_TOTAL=$(wc -l < "$ALL_LIVE_HOSTS" | xargs)
+    ARP_NEW=$((ARP_TOTAL - NMAP_COUNT))
+
+    echo ""
+    echo "  ARP scan found $ARP_NEW additional hosts that nmap missed"
+    echo "  Full ARP log: $ARP_LOG"
+    echo ""
+fi
+
+# Deduplicate (in case arp-scan was skipped)
 sort -u -o "$ALL_LIVE_HOSTS" "$ALL_LIVE_HOSTS"
 TOTAL=$(wc -l < "$ALL_LIVE_HOSTS" | xargs)
 
