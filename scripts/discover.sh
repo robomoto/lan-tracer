@@ -267,8 +267,17 @@ if [[ "$USE_MDNS" == true ]]; then
         if command -v dns-sd &>/dev/null; then
             echo "  Running dns-sd browse (5 seconds)..."
             # dns-sd runs indefinitely; kill after timeout
-            timeout 5 dns-sd -B _services._dns-sd._udp local. > "$MDNS_LOG" 2>&1 || true
-            MDNS_COUNT=$(grep -c "Add" "$MDNS_LOG" 2>/dev/null || echo "0")
+            # macOS may not have 'timeout' (coreutils) — use perl fallback
+            if command -v timeout &>/dev/null; then
+                timeout 5 dns-sd -B _services._dns-sd._udp local. > "$MDNS_LOG" 2>&1 || true
+            else
+                dns-sd -B _services._dns-sd._udp local. > "$MDNS_LOG" 2>&1 &
+                local dns_sd_pid=$!
+                sleep 5
+                kill "$dns_sd_pid" 2>/dev/null || true
+                wait "$dns_sd_pid" 2>/dev/null || true
+            fi
+            MDNS_COUNT=$(grep -c "Add" "$MDNS_LOG" 2>/dev/null) || MDNS_COUNT=0
             echo "  Found $MDNS_COUNT mDNS service types"
         else
             echo "  dns-sd not found (unexpected on macOS)"
