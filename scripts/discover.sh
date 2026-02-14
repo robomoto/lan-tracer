@@ -272,7 +272,7 @@ if [[ "$USE_MDNS" == true ]]; then
                 timeout 5 dns-sd -B _services._dns-sd._udp local. > "$MDNS_LOG" 2>&1 || true
             else
                 dns-sd -B _services._dns-sd._udp local. > "$MDNS_LOG" 2>&1 &
-                local dns_sd_pid=$!
+                dns_sd_pid=$!
                 sleep 5
                 kill "$dns_sd_pid" 2>/dev/null || true
                 wait "$dns_sd_pid" 2>/dev/null || true
