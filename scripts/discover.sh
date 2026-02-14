@@ -180,11 +180,16 @@ elif [[ "$USE_ARP" == true ]]; then
 fi
 
 # Auto-detect network interface for arp-scan
+# Use the interface that routes to the first target subnet (not the default route,
+# which may point at a VPN tunnel that can't do ARP)
 if [[ "$HAS_ARP" == true && -z "$ARP_IFACE" ]]; then
+    # Extract a sample IP from the first subnet (e.g. 192.168.50.0/24 → 192.168.50.1)
+    SAMPLE_IP="${SUBNETS[0]%/*}"
+    SAMPLE_IP="${SAMPLE_IP%.*}.$((${SAMPLE_IP##*.} + 1))"
     if [[ "$(uname)" == "Darwin" ]]; then
-        ARP_IFACE=$(route -n get default 2>/dev/null | awk '/interface:/{print $2}' || echo "en0")
+        ARP_IFACE=$(route -n get "$SAMPLE_IP" 2>/dev/null | awk '/interface:/{print $2}' || echo "en0")
     else
-        ARP_IFACE=$(ip route show default 2>/dev/null | awk '{print $5; exit}' || echo "eth0")
+        ARP_IFACE=$(ip route get "$SAMPLE_IP" 2>/dev/null | awk '{for(i=1;i<=NF;i++) if($i=="dev") print $(i+1); exit}' || echo "eth0")
     fi
 fi
 
