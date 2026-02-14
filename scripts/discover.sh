@@ -8,18 +8,20 @@ SITES_DIR="$PROJECT_DIR/sites"
 
 usage() {
     cat <<EOF
-Usage: $(basename "$0") <site_name> [subnet | -f config_file]
+Usage: $(basename "$0") <site_name> [subnet | -f config_file | --auto]
 
 Quick network sweep using nmap ping scan (-sn), with optional arp-scan
 fallback to catch hosts that block ICMP, and mDNS service discovery.
 
 Examples:
+  $(basename "$0") office --auto                    # Auto-detect local subnets
   $(basename "$0") office 10.10.1.0/24
   $(basename "$0") office -f sites/office.conf
   $(basename "$0") office 10.10.1.0/24 10.10.2.0/24
   $(basename "$0") office -f sites/office.conf --no-arp --no-mdns
 
 Options:
+  --auto     Auto-detect local subnets from network interfaces
   -f FILE    Read subnets from a site config file (one CIDR per line)
   --no-arp   Skip arp-scan fallback (nmap only)
   --no-mdns  Skip mDNS service discovery
@@ -30,11 +32,70 @@ EOF
 }
 
 if [[ $# -lt 2 ]]; then
+    # Allow: discover.sh office --auto (only 2 args needed, not a bare subnet)
     usage
 fi
 
 SITE_NAME="$1"
 shift
+
+# Auto-detect local subnets from network interfaces
+detect_subnets() {
+    local subnets=()
+    if [[ "$(uname)" == "Darwin" ]]; then
+        # macOS: parse ifconfig for inet lines with netmask
+        while IFS= read -r line; do
+            local ip mask
+            ip=$(echo "$line" | awk '{print $2}')
+            mask=$(echo "$line" | awk '{print $4}')
+            # Skip loopback and link-local
+            [[ "$ip" == 127.* ]] && continue
+            [[ "$ip" == 169.254.* ]] && continue
+            # Skip point-to-point tunnel interfaces (VPNs)
+            if echo "$line" | grep -q -- '-->'; then
+                continue
+            fi
+            # Convert hex netmask to CIDR prefix length
+            local cidr=0
+            for octet in $(echo "$mask" | sed 's/0x//' | fold -w2); do
+                local dec=$((16#$octet))
+                while [[ $dec -gt 0 ]]; do
+                    cidr=$((cidr + (dec & 1)))
+                    dec=$((dec >> 1))
+                done
+            done
+            # Calculate network address
+            IFS='.' read -r a b c d <<< "$ip"
+            IFS='.' read -r ma mb mc md <<< "$(printf "%d.%d.%d.%d" "0x${mask:2:2}" "0x${mask:4:2}" "0x${mask:6:2}" "0x${mask:8:2}")"
+            local network="$((a & ma)).$((b & mb)).$((c & mc)).$((d & md))"
+            subnets+=("${network}/${cidr}")
+        done < <(ifconfig 2>/dev/null | grep "inet " | grep -v "127\.0\.0\.1")
+    else
+        # Linux: parse ip addr
+        while IFS= read -r line; do
+            local cidr_addr
+            cidr_addr=$(echo "$line" | awk '{print $2}')
+            local ip="${cidr_addr%/*}"
+            local prefix="${cidr_addr#*/}"
+            # Skip loopback and link-local
+            [[ "$ip" == 127.* ]] && continue
+            [[ "$ip" == 169.254.* ]] && continue
+            # Calculate network address
+            IFS='.' read -r a b c d <<< "$ip"
+            local full_mask=$(( (0xFFFFFFFF << (32 - prefix)) & 0xFFFFFFFF ))
+            local ma=$(( (full_mask >> 24) & 0xFF ))
+            local mb=$(( (full_mask >> 16) & 0xFF ))
+            local mc=$(( (full_mask >> 8) & 0xFF ))
+            local md=$(( full_mask & 0xFF ))
+            local network="$((a & ma)).$((b & mb)).$((c & mc)).$((d & md))"
+            subnets+=("${network}/${prefix}")
+        done < <(ip -4 addr show 2>/dev/null | grep "inet " | grep -v "127\.0\.0\.1" | grep -v "scope host")
+    fi
+    # Print results
+    for s in "${subnets[@]}"; do
+        echo "$s"
+    done
+}
 
 # Collect subnets and options
 SUBNETS=()
@@ -43,6 +104,19 @@ USE_MDNS=true
 ARP_IFACE=""
 while [[ $# -gt 0 ]]; do
     case "$1" in
+        --auto)
+            echo "Detecting local subnets..."
+            while IFS= read -r subnet; do
+                [[ -n "$subnet" ]] && SUBNETS+=("$subnet")
+            done < <(detect_subnets)
+            if [[ ${#SUBNETS[@]} -eq 0 ]]; then
+                echo "Error: Could not detect any local subnets."
+                echo "Specify subnets manually instead."
+                exit 1
+            fi
+            echo "  Found: ${SUBNETS[*]}"
+            echo ""
+            ;;
         -f)
             shift
             CONFIG_FILE="$1"

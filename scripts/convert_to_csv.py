@@ -7,6 +7,7 @@ Uses only Python stdlib — no external dependencies required.
 import argparse
 import csv
 import os
+import re
 import sys
 import xml.etree.ElementTree as ET
 from pathlib import Path
@@ -149,7 +150,8 @@ def parse_host(host_elem, site_name):
                         if "<unique>" in line.lower() and "<active>" in line.lower():
                             parts = line.strip().split()
                             if parts:
-                                record["Hostname"] = parts[0]
+                                # Strip NetBIOS suffix like <00>, <20>, etc.
+                                record["Hostname"] = re.sub(r"<[0-9a-fA-F]{2}>$", "", parts[0])
                                 break
                 # Check for <1C> group type — definitive DC identifier
                 for line in output.splitlines():
