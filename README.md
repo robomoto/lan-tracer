@@ -1,6 +1,6 @@
 # LAN Tracer - Network Discovery Toolkit
 
-Portable network discovery toolkit for finding servers across multiple sites. Designed for environments without Lansweeper licenses, with CSV export compatible with Lansweeper import.
+Portable network discovery toolkit for finding servers across multiple sites, with CSV export for asset management.
 
 ## Prerequisites
 
@@ -67,7 +67,7 @@ Scans ~30 server-indicative ports: SSH(22), SMTP(25), DNS(53), HTTP(80/443), Ker
 
 ### Phase 3: CSV Export (`convert_to_csv.py`)
 
-Parses nmap XML results and produces Lansweeper-compatible CSV files.
+Parses nmap XML results and produces CSV files for asset management.
 
 ```bash
 # All sites

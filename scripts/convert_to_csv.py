@@ -1,5 +1,5 @@
 #!/usr/bin/env python3
-"""Convert nmap XML scan results to Lansweeper-compatible CSV files.
+"""Convert nmap XML scan results to CSV files for asset management.
 
 Uses only Python stdlib — no external dependencies required.
 """
@@ -241,7 +241,7 @@ def write_csv(records, output_path):
 
 def main():
     parser = argparse.ArgumentParser(
-        description="Convert nmap XML results to Lansweeper-compatible CSV"
+        description="Convert nmap XML results to CSV for asset management"
     )
     parser.add_argument(
         "--results-dir",
