@@ -11,11 +11,14 @@ Portable network discovery toolkit for finding servers across multiple sites, wi
 ## Quick Start
 
 ```bash
-# 1. Sweep a subnet to find live hosts
-./scripts/discover.sh mysite 10.10.1.0/24
+# 1. Sweep to find live hosts (auto-detects your local subnets)
+sudo ./scripts/discover.sh mysite --auto
+
+# Or specify a subnet manually
+sudo ./scripts/discover.sh mysite 10.10.1.0/24
 
 # 2. Deep scan live hosts for server identification
-./scripts/discover_servers.sh mysite
+sudo ./scripts/discover_servers.sh mysite
 
 # 3. Convert results to CSV
 python3 scripts/convert_to_csv.py
@@ -28,17 +31,20 @@ python3 scripts/convert_to_csv.py
 Runs an nmap ping sweep (`-sn`) to find all live hosts, with optional arp-scan fallback for ICMP-blocking hosts and mDNS service discovery. Fast — takes seconds per /24 subnet.
 
 ```bash
+# Auto-detect local subnets
+sudo ./scripts/discover.sh office --auto
+
 # Single subnet
-./scripts/discover.sh office 10.10.1.0/24
+sudo ./scripts/discover.sh office 10.10.1.0/24
 
 # Multiple subnets
-./scripts/discover.sh office 10.10.1.0/24 10.10.2.0/24 10.10.3.0/24
+sudo ./scripts/discover.sh office 10.10.1.0/24 10.10.2.0/24 10.10.3.0/24
 
 # From a site config file
-./scripts/discover.sh office -f sites/office.conf
+sudo ./scripts/discover.sh office -f sites/office.conf
 
 # Skip optional phases
-./scripts/discover.sh office 10.10.1.0/24 --no-arp --no-mdns
+sudo ./scripts/discover.sh office 10.10.1.0/24 --no-arp --no-mdns
 ```
 
 **Phases:**
