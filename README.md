@@ -165,6 +165,151 @@ done
 python3 scripts/convert_to_csv.py
 ```
 
+## Remote Scanning via SSH
+
+When sites are in different countries/locations, SSH into a Linux box at each site, run scans there, and pull results back for local CSV processing.
+
+### Prerequisites at each remote site
+
+- A Linux machine (jump box, server, VM — anything with network access to the target subnets)
+- SSH access from your office to that machine (direct or via VPN)
+- `nmap` installed on the remote machine
+- `sudo` access for SYN scanning and OS detection
+
+### 1. Deploy LAN Tracer to a remote site
+
+```bash
+# Copy the toolkit to the remote machine (first time only)
+scp -r lan_tracer/ user@jumpbox-london:/opt/lan_tracer
+
+# Or clone from your repo
+ssh user@jumpbox-london "git clone https://your-repo/lan_tracer.git /opt/lan_tracer"
+```
+
+### 2. Create a site config locally and push it
+
+```bash
+# sites/london.conf
+cat > sites/london.conf <<EOF
+# Site: London Office
+# Contact: Jane Smith
+10.20.1.0/24
+10.20.2.0/24
+10.20.10.0/24
+EOF
+
+scp sites/london.conf user@jumpbox-london:/opt/lan_tracer/sites/
+```
+
+### 3. Run scans remotely via SSH
+
+```bash
+# Quick sweep
+ssh user@jumpbox-london "cd /opt/lan_tracer && ./scripts/discover.sh london -f sites/london.conf"
+
+# Deep scan (requires sudo — use -t flag for ssh pseudo-terminal)
+ssh -t user@jumpbox-london "cd /opt/lan_tracer && sudo ./scripts/discover_servers.sh london"
+```
+
+For long-running scans, use `nohup` or `tmux` so the scan survives a dropped connection:
+
+```bash
+# Start scan in background (survives disconnection)
+ssh user@jumpbox-london "cd /opt/lan_tracer && nohup sudo ./scripts/discover_servers.sh london > /tmp/scan.log 2>&1 &"
+
+# Check progress later
+ssh user@jumpbox-london "tail -f /tmp/scan.log"
+
+# Or use tmux for an interactive session
+ssh -t user@jumpbox-london "tmux new -s scan 'cd /opt/lan_tracer && sudo ./scripts/discover_servers.sh london'"
+# Detach with Ctrl-b d, reattach later:
+ssh -t user@jumpbox-london "tmux attach -t scan"
+```
+
+### 4. Pull results back to your office
+
+```bash
+# Pull a single site's results
+scp -r user@jumpbox-london:/opt/lan_tracer/results/london/ results/london/
+
+# Pull from all sites at once (add entries for each site)
+for site in london paris tokyo sydney; do
+    echo "Pulling results from $site..."
+    scp -r "user@jumpbox-${site}:/opt/lan_tracer/results/${site}/" "results/${site}/"
+done
+```
+
+### 5. Generate CSV locally
+
+Once all results are in your local `results/` directory:
+
+```bash
+# Process everything into unified CSVs
+python3 scripts/convert_to_csv.py
+
+# Or one site at a time
+python3 scripts/convert_to_csv.py --site london
+```
+
+### Scanning multiple sites in parallel
+
+```bash
+#!/usr/bin/env bash
+# scan_all_sites.sh — run sweeps across all remote sites concurrently
+
+declare -A SITES
+SITES[london]="user@jumpbox-london"
+SITES[paris]="user@jumpbox-paris"
+SITES[tokyo]="user@jumpbox-tokyo"
+SITES[sydney]="user@jumpbox-sydney"
+
+# Phase 1: Sweep all sites in parallel
+for site in "${!SITES[@]}"; do
+    host="${SITES[$site]}"
+    echo "Starting sweep: $site ($host)"
+    ssh "$host" "cd /opt/lan_tracer && ./scripts/discover.sh $site -f sites/${site}.conf" &
+done
+wait
+echo "All sweeps complete."
+
+# Phase 2: Deep scan all sites in parallel
+for site in "${!SITES[@]}"; do
+    host="${SITES[$site]}"
+    echo "Starting deep scan: $site ($host)"
+    ssh -t "$host" "cd /opt/lan_tracer && sudo ./scripts/discover_servers.sh $site" &
+done
+wait
+echo "All deep scans complete."
+
+# Phase 3: Pull results back
+for site in "${!SITES[@]}"; do
+    host="${SITES[$site]}"
+    scp -r "${host}:/opt/lan_tracer/results/${site}/" "results/${site}/"
+done
+
+# Phase 4: Generate CSV
+python3 scripts/convert_to_csv.py
+```
+
+### Tips
+
+- **SSH keys**: Set up key-based auth to avoid typing passwords for every site. Use `ssh-copy-id user@jumpbox-london`.
+- **SSH config**: Add entries in `~/.ssh/config` to simplify hostnames and manage jump proxies:
+  ```
+  Host london
+      HostName 203.0.113.10
+      User scanner
+      IdentityFile ~/.ssh/lan_tracer_key
+
+  Host paris
+      HostName 198.51.100.20
+      User scanner
+      ProxyJump vpn-gateway
+  ```
+- **Firewall rules**: The remote machine needs outbound access to the target subnets. Nmap SYN scanning requires raw sockets (sudo).
+- **VPN tunnels**: If sites are connected via VPN, you may be able to scan remote subnets directly from your office — but latency and packet loss make remote nmap scans unreliable. Running nmap locally at each site gives much better results.
+- **Consistent versions**: Keep the same version of LAN Tracer and nmap across all sites to ensure consistent output. Use `nmap --version` to check.
+
 ## Additional Discovery Tools
 
 nmap won't find everything — devices blocking ICMP, hosts on isolated VLANs, or machines with host firewalls will be missed. These complementary tools fill the gaps.
