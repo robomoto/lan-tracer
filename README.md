@@ -25,7 +25,7 @@ python3 scripts/convert_to_csv.py
 
 ### Phase 1: Quick Sweep (`discover.sh`)
 
-Runs an nmap ping sweep (`-sn`) to find all live hosts. Fast — takes seconds per /24 subnet.
+Runs an nmap ping sweep (`-sn`) to find all live hosts, with optional arp-scan fallback for ICMP-blocking hosts and mDNS service discovery. Fast — takes seconds per /24 subnet.
 
 ```bash
 # Single subnet
@@ -36,9 +36,17 @@ Runs an nmap ping sweep (`-sn`) to find all live hosts. Fast — takes seconds p
 
 # From a site config file
 ./scripts/discover.sh office -f sites/office.conf
+
+# Skip optional phases
+./scripts/discover.sh office 10.10.1.0/24 --no-arp --no-mdns
 ```
 
-Output: `results/<site>/live_hosts.txt` + XML/grepable files.
+**Phases:**
+1. **nmap ping sweep** — ICMP/ARP host discovery
+2. **arp-scan fallback** — catches hosts blocking ICMP (skip with `--no-arp`)
+3. **mDNS discovery** — finds devices advertising Bonjour/mDNS services like smart speakers, printers, Apple devices (skip with `--no-mdns`). Uses `dns-sd` on macOS, `avahi-browse` on Linux.
+
+Output: `results/<site>/live_hosts.txt` + XML/grepable files + `mdns_<timestamp>.txt`.
 
 ### Phase 2: Server Deep Scan (`discover_servers.sh`)
 
@@ -76,6 +84,30 @@ python3 scripts/convert_to_csv.py --output-dir /tmp/export
 ```
 
 Output columns: IP Address, MAC Address, Vendor, Hostname, OS, OS Accuracy, Open Ports, Services, Site, Likely Server, Server Indicators.
+
+### Host Investigation (`identify.sh`)
+
+When the sweep finds devices that can't be identified (all ports filtered, no OS detected), use `identify.sh` to run multiple identification techniques against specific IPs.
+
+```bash
+# Investigate a specific host
+sudo ./scripts/identify.sh office 10.10.1.12
+
+# Investigate multiple hosts
+sudo ./scripts/identify.sh office 10.10.1.12 10.10.1.15
+
+# Auto-select unidentified hosts from the latest deep scan
+sudo ./scripts/identify.sh office --unidentified
+```
+
+**Techniques run (in order):**
+1. Broad port scan (nmap SYN scan, ports 1-10000)
+2. mDNS lookup (dns-sd / avahi-browse)
+3. MAC vendor lookup (nmap OUI database)
+4. NetBIOS query (nmblookup)
+5. Reverse DNS (host / dig)
+
+Output: Console summary + `results/<site>/identify_<ip>_<timestamp>.txt`
 
 ### Site Config Files
 

@@ -11,8 +11,9 @@ Network discovery toolkit for finding servers across ~40 sites without Lansweepe
 
 ## Key Files
 
-- `scripts/discover.sh` — nmap ping sweep, produces live_hosts.txt
+- `scripts/discover.sh` — nmap ping sweep + arp-scan + mDNS discovery, produces live_hosts.txt
 - `scripts/discover_servers.sh` — deep scan with OS/service detection (requires sudo)
+- `scripts/identify.sh` — focused investigation of unknown hosts (broad portscan, mDNS, MAC vendor, NetBIOS, rDNS)
 - `scripts/convert_to_csv.py` — nmap XML → Lansweeper CSV with server classification
 - `sites/*.conf` — site config files (one CIDR per line)
 - `results/` — scan output (gitignored, contains sensitive data)

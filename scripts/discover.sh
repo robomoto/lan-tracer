@@ -11,17 +11,18 @@ usage() {
 Usage: $(basename "$0") <site_name> [subnet | -f config_file]
 
 Quick network sweep using nmap ping scan (-sn), with optional arp-scan
-fallback to catch hosts that block ICMP.
+fallback to catch hosts that block ICMP, and mDNS service discovery.
 
 Examples:
   $(basename "$0") office 10.10.1.0/24
   $(basename "$0") office -f sites/office.conf
   $(basename "$0") office 10.10.1.0/24 10.10.2.0/24
-  $(basename "$0") office -f sites/office.conf --no-arp
+  $(basename "$0") office -f sites/office.conf --no-arp --no-mdns
 
 Options:
   -f FILE    Read subnets from a site config file (one CIDR per line)
   --no-arp   Skip arp-scan fallback (nmap only)
+  --no-mdns  Skip mDNS service discovery
   -i IFACE   Network interface for arp-scan (default: auto-detect)
   -h         Show this help
 EOF
@@ -38,6 +39,7 @@ shift
 # Collect subnets and options
 SUBNETS=()
 USE_ARP=true
+USE_MDNS=true
 ARP_IFACE=""
 while [[ $# -gt 0 ]]; do
     case "$1" in
@@ -61,6 +63,9 @@ while [[ $# -gt 0 ]]; do
             ;;
         --no-arp)
             USE_ARP=false
+            ;;
+        --no-mdns)
+            USE_MDNS=false
             ;;
         -i)
             shift
@@ -171,6 +176,39 @@ if [[ "$HAS_ARP" == true ]]; then
     echo ""
     echo "  ARP scan found $ARP_NEW additional hosts that nmap missed"
     echo "  Full ARP log: $ARP_LOG"
+    echo ""
+fi
+
+# Phase 3: mDNS service discovery
+if [[ "$USE_MDNS" == true ]]; then
+    echo "--- mDNS service discovery ---"
+    MDNS_LOG="$SITE_DIR/mdns_${TIMESTAMP}.txt"
+
+    if [[ "$(uname)" == "Darwin" ]]; then
+        if command -v dns-sd &>/dev/null; then
+            echo "  Running dns-sd browse (5 seconds)..."
+            # dns-sd runs indefinitely; kill after timeout
+            timeout 5 dns-sd -B _services._dns-sd._udp local. > "$MDNS_LOG" 2>&1 || true
+            MDNS_COUNT=$(grep -c "Add" "$MDNS_LOG" 2>/dev/null || echo "0")
+            echo "  Found $MDNS_COUNT mDNS service types"
+        else
+            echo "  dns-sd not found (unexpected on macOS)"
+        fi
+    else
+        if command -v avahi-browse &>/dev/null; then
+            echo "  Running avahi-browse (5 seconds)..."
+            timeout 5 avahi-browse -art > "$MDNS_LOG" 2>&1 || true
+            MDNS_COUNT=$(grep -c "^=" "$MDNS_LOG" 2>/dev/null || echo "0")
+            echo "  Found $MDNS_COUNT mDNS service entries"
+        else
+            echo "  avahi-browse not found. Install for mDNS discovery:"
+            echo "    sudo apt install avahi-utils"
+        fi
+    fi
+
+    if [[ -f "$MDNS_LOG" && -s "$MDNS_LOG" ]]; then
+        echo "  mDNS log: $MDNS_LOG"
+    fi
     echo ""
 fi
 
